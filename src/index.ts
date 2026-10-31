@@ -14,6 +14,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { stat } from "node:fs/promises";
 import { YandexDiskClient, Resource } from "./yandex-disk-client.js";
 
 // ─── Init ───────────────────────────────────────────────
@@ -152,19 +153,13 @@ server.tool(
 
 server.tool(
   "delete",
-  "Delete a file or folder on Yandex Disk (moves to trash by default)",
+  "Move a file or folder on Yandex Disk to the trash (never deletes permanently)",
   {
     path: z.string().describe("Path to delete, e.g. 'disk:/old-file.txt'"),
-    permanently: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe("If true, delete permanently instead of moving to trash"),
   },
-  async ({ path, permanently }) => {
-    await client.deleteResource(path, permanently);
-    const mode = permanently ? "permanently deleted" : "moved to trash";
-    return textResult(`🗑️ ${path} — ${mode}`);
+  async ({ path }) => {
+    await client.deleteResource(path, false);
+    return textResult(`🗑️ ${path} — moved to trash`);
   }
 );
 
@@ -228,6 +223,27 @@ server.tool(
     return textResult(
       `⬆️ Upload URL for ${path}:\n${link.href}\n\nUse HTTP PUT with file content to this URL.`
     );
+  }
+);
+
+// ─── Tool: upload_file ──────────────────────────────────
+
+server.tool(
+  "upload_file",
+  "Upload a local file to Yandex Disk (streams the file, no size limit in memory)",
+  {
+    local_path: z.string().describe("Absolute path of the local file"),
+    path: z.string().describe("Destination path on disk, e.g. 'disk:/uploads/report.pdf'"),
+    overwrite: z.boolean().optional().default(false).describe("Overwrite if file exists"),
+  },
+  async ({ local_path, path, overwrite }) => {
+    const info = await stat(local_path);
+    if (!info.isFile()) {
+      throw new Error(`Not a regular file: ${local_path}`);
+    }
+    const link = await client.getUploadLink(path, overwrite);
+    await client.uploadFile(link.href, local_path, info.size);
+    return textResult(`⬆️ Uploaded ${local_path} (${formatSize(info.size)}) → ${path}`);
   }
 );
 
@@ -332,23 +348,6 @@ server.tool(
   async ({ path, name, overwrite }) => {
     await client.restoreFromTrash(path, name, overwrite);
     return textResult(`♻️ Restored from trash: ${path}${name ? ` as ${name}` : ""}`);
-  }
-);
-
-// ─── Tool: clear_trash ──────────────────────────────────
-
-server.tool(
-  "clear_trash",
-  "Clear the trash (delete all or a specific item permanently)",
-  {
-    path: z
-      .string()
-      .optional()
-      .describe("Specific trash path to delete, or omit to clear entire trash"),
-  },
-  async ({ path }) => {
-    await client.clearTrash(path);
-    return textResult(path ? `🗑️ Permanently deleted from trash: ${path}` : "🗑️ Trash cleared.");
   }
 );
 

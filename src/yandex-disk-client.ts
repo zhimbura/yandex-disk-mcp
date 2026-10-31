@@ -3,6 +3,9 @@
  * API docs: https://yandex.com/dev/disk-api/doc/en/
  */
 
+import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
+
 const API_BASE = "https://cloud-api.yandex.net/v1/disk";
 
 export interface DiskInfo {
@@ -159,6 +162,20 @@ export class YandexDiskClient {
     });
   }
 
+  async uploadFile(href: string, localPath: string, size: number): Promise<void> {
+    const response = await fetch(href, {
+      method: "PUT",
+      headers: { "Content-Length": String(size) },
+      body: Readable.toWeb(createReadStream(localPath)) as unknown as ReadableStream,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+    if (response.status !== 201 && response.status !== 202) {
+      throw new Error(
+        `Upload failed: HTTP ${response.status} ${await response.text()}`
+      );
+    }
+  }
+
   async uploadByUrl(path: string, url: string): Promise<Link> {
     return this.request<Link>("/resources/upload", {
       method: "POST",
@@ -216,15 +233,6 @@ export class YandexDiskClient {
     if (name) params.name = name;
     return this.request<Link>("/trash/resources/restore", {
       method: "PUT",
-      params,
-    });
-  }
-
-  async clearTrash(path?: string): Promise<Link | Record<string, never>> {
-    const params: Record<string, string> = {};
-    if (path) params.path = path;
-    return this.request<Link | Record<string, never>>("/trash/resources", {
-      method: "DELETE",
       params,
     });
   }
